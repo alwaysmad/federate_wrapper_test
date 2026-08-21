@@ -1,1 +1,0 @@
-/home/pasha/build/federate_test/worker.py

@@ -1,3 +1,0 @@
-/home/pasha/build/federate_test/build/CMakeFiles/subprocess_test.dir
-/home/pasha/build/federate_test/build/CMakeFiles/edit_cache.dir
-/home/pasha/build/federate_test/build/CMakeFiles/rebuild_cache.dir
