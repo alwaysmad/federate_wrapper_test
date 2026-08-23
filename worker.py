@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import sys
-import os
 import socket
 import json
 import signal
@@ -12,54 +11,48 @@ def sigterm_handler(signum, frame):
 
 signal.signal(signal.SIGTERM, sigterm_handler)
 
-parser = argparse.ArgumentParser(description="UDS JSON Worker")
-parser.add_argument("--listen-sock", type=str, default="/tmp/federate_py.sock", help="Path where Python listens")
-parser.add_argument("--send-sock", type=str, default="/tmp/federate_cpp.sock", help="Path where C++ listens")
+parser = argparse.ArgumentParser(description="Abstract Namespace Worker")
+parser.add_argument("--ipc-name", type=str, required=True, help="Abstract IPC name (without null byte)")
 args = parser.parse_args()
 
-# Clean up stale socket file if it exists
-if os.path.exists(args.listen_sock):
-    os.remove(args.listen_sock)
+# 1. Initialize SOCK_SEQPACKET
+sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
 
-# Initialize AF_UNIX datagram socket
-sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-sock.bind(args.listen_sock)
-sock.settimeout(1.0)
+# 2. Connect via Abstract Namespace by prepending \0
+abstract_address = "\0" + args.ipc_name
+try:
+    sock.connect(abstract_address)
+except Exception as e:
+    print(f"[Python] Fatal: Failed to connect to C++ IPC '{args.ipc_name}': {e}", file=sys.stderr)
+    sys.exit(1)
 
-print(f"[Python] UDS Worker initialized. Listening on {args.listen_sock}, sending to {args.send_sock}", flush=True)
+print(f"[Python] Connected to Abstract IPC: {args.ipc_name}", flush=True)
 
 try:
     while True:
-        try:
-            data, sender_addr = sock.recvfrom(65535)
-            payload = json.loads(data.decode("utf-8"))
+        # SEQPACKET guarantees we receive exactly one discrete JSON message per recv() call
+        data = sock.recv(65535)
+        if not data:
+            print("[Python] C++ closed the connection. Exiting.", flush=True)
+            break
 
-            step = payload.get("step", 0)
-            command = payload.get("command", "unknown")
-            print(f"[Python] Received '{command}' (step={step})", flush=True)
+        payload = json.loads(data.decode("utf-8"))
+        step = payload.get("step", 0)
+        command = payload.get("command", "unknown")
+        
+        print(f"[Python] Processed command '{command}' step {step}", flush=True)
 
-            response = {
-                "status": "ACK",
-                "in_response_to": step,
-                "command": command,
-                "worker_state": "ready"
-            }
-
-            response_bytes = json.dumps(response).encode("utf-8")
-            sock.sendto(response_bytes, args.send_sock)
-            print(f"[Python] Sent response to {args.send_sock}", flush=True)
-
-        except socket.timeout:
-            continue
-        except json.JSONDecodeError as e:
-            print(f"[Python] Malformed JSON received: {e}", flush=True)
-        except Exception as e:
-            print(f"[Python] Unexpected runtime error: {e}", flush=True)
+        # 3. Formulate and send response on the same connected socket
+        response = {
+            "status": "ACK",
+            "in_response_to": step
+        }
+        sock.sendall(json.dumps(response).encode("utf-8"))
 
 except KeyboardInterrupt:
     pass
+except Exception as e:
+    print(f"[Python] Runtime error: {e}", file=sys.stderr)
 finally:
     sock.close()
-    if os.path.exists(args.listen_sock):
-        os.remove(args.listen_sock)
-    print("[Python] UDS Socket closed and unlinked. Exiting.", flush=True)
+    print("[Python] IPC socket closed.", flush=True)

@@ -1,5 +1,5 @@
 #include "PythonSubprocess.hpp"
-#include "JsonUdsChannel.hpp"
+#include "JsonIpcChannel.hpp"
 
 #include <csignal>
 #include <atomic>
@@ -25,45 +25,39 @@ int main() {
     sigaction(SIGINT, &sa, nullptr);
     sigaction(SIGTERM, &sa, nullptr);
 
-    const std::string cpp_sock = "/tmp/federate_cpp.sock";
-    const std::string py_sock = "/tmp/federate_py.sock";
-
     try {
-        // 1. Initialize C++ channel (binds /tmp/federate_cpp.sock immediately)
-        JsonUdsChannel channel(cpp_sock, py_sock);
+        // 1. Generate mathematically unique abstract name for this specific instance
+        std::string unique_ipc_name = "rti_fed_" + std::to_string(getpid());
 
-        // 2. Launch Python child passing explicit socket paths
-        PythonSubprocess worker("worker.py", {
-            "--listen-sock", py_sock,
-            "--send-sock", cpp_sock
-        });
+        // 2. Initialize the IPC Server
+        JsonIpcChannel channel(unique_ipc_name);
 
-        // Small delay for Python socket bind
-        std::this_thread::sleep_for(150ms);
+        // 3. Spawn Python child, passing the unique name
+        PythonSubprocess worker("worker.py", {"--ipc-name", unique_ipc_name});
 
-        // 3. Synchronous federate cycle
+        std::cout << "[C++] Waiting for Python worker to connect...\n";
+        
+        // 4. Accept the connection (throws if Python fails to launch/connect in 5s)
+        channel.accept_client();
+        std::cout << "[C++] Connection established!\n";
+
+        // 5. Synchronous federation loop
         int step = 0;
         while (!g_shutdown_requested.load() && step < 5) {
-            if (!worker.is_running()) {
-                std::cerr << "[C++] Worker exited prematurely.\n";
-                break;
-            }
-
-            nlohmann::json tick = {
-                {"command", "advance_time"},
-                {"step", step},
-                {"federate_time", step * 0.1}
+            
+            nlohmann::json cmd = {
+                {"command", "federate_sync"},
+                {"step", step}
             };
 
-            std::cout << "[C++] Dispatching step " << step << "...\n";
-            channel.send(tick);
-
-            // Wait for worker ACK with 1-second timeout
-            nlohmann::json ack = channel.receive(1000ms);
-            std::cout << "[C++] Worker Response: " << ack.dump() << "\n";
+            channel.send(cmd);
+            
+            // receive() blocks until Python sends ACK or timeout occurs
+            nlohmann::json ack = channel.receive();
+            std::cout << "[C++] ACK: " << ack.dump() << "\n";
 
             step++;
-            std::this_thread::sleep_for(200ms);
+            std::this_thread::sleep_for(500ms);
         }
 
     } catch (const std::exception& e) {
@@ -71,6 +65,6 @@ int main() {
         return 1;
     }
 
-    std::cout << "[C++] Clean exit. Sockets unlinked.\n";
+    std::cout << "[C++] Exit clean.\n";
     return 0;
 }

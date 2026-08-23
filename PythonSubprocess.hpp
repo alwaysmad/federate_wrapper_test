@@ -14,7 +14,8 @@ private:
     mutable pid_t pid_{-1};
     static constexpr const char* kDefaultPython = "python3";
 
-    void cleanup() noexcept {
+    inline void cleanup() noexcept
+    {
         if (pid_ <= 0) return;
 
         std::cout << "[C++] Terminating Python worker [PID: " << pid_ << "]...\n";
@@ -98,22 +99,18 @@ public:
      * @brief Checks if the child process is still alive.
      * Reaps the process if it has exited and returns false.
      */
-    [[nodiscard]] bool is_running() const {
+    [[nodiscard]] bool is_running() const
+    {
         if (pid_ <= 0) return false;
 
         int status = 0;
         pid_t result = waitpid(pid_, &status, WNOHANG);
 
-        if (result == 0) {
-            // Child is still actively running
-            return true;
-        }
+        if (result == 0) // Child is still actively running
+            { return true; }
 
-        if (result == pid_) {
-            // Child exited on its own and has been reaped
-            pid_ = -1;
-            return false;
-        }
+        if (result == pid_) // Child exited on its own and has been reaped
+            { pid_ = -1; return false; }
 
         // waitpid error (e.g., ECHILD)
         pid_ = -1;
