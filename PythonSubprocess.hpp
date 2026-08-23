@@ -8,45 +8,18 @@
 #include <sys/wait.h>
 #include <signal.h>
 
-class PythonSubprocess {
-public:
-    PythonSubprocess(const std::string& script_path, const std::vector<std::string>& args = {})
-    {
-        pid_ = fork();
+class PythonSubprocess
+{
+private:
+    mutable pid_t pid_{-1};
+    static constexpr const char* kDefaultPython = "python3";
 
-        if (pid_ < 0)
-            { throw std::runtime_error("Failed to fork Python process"); }
-
-        if (pid_ == 0)
-        {
-            // Child process: assemble arguments for execvp
-            std::vector<const char*> exec_args;
-            exec_args.push_back("python3");
-            exec_args.push_back(script_path.c_str());
-
-            for (const auto& arg : args)
-                { exec_args.push_back(arg.c_str()); }
-            exec_args.push_back(nullptr);
-
-            execvp("python3", const_cast<char* const*>(exec_args.data()));
-
-            // If execvp fails, exit child immediately
-            std::cerr << "[C++ Child] Failed to exec python3 on script: " << script_path << "\n";
-            _exit(127);
-        }
-
-        std::cout << "[C++] Spawned Python worker [PID: " << pid_ << "]\n";
-    }
-
-    ~PythonSubprocess() { stop(); }
-
-    void stop()
-    {
-        if (pid_ <= 0) { return; }
+    void cleanup() noexcept {
+        if (pid_ <= 0) return;
 
         std::cout << "[C++] Terminating Python worker [PID: " << pid_ << "]...\n";
-        
-        // 1. Send graceful termination signal
+
+        // 1. Send graceful shutdown signal
         kill(pid_, SIGTERM);
 
         // 2. Wait up to 500ms for exit
@@ -54,8 +27,8 @@ public:
         bool exited = false;
         for (int i = 0; i < 5; ++i)
         {
-            pid_t result = waitpid(pid_, &status, WNOHANG);
-            if (result == pid_) { exited = true; break; }
+            if (waitpid(pid_, &status, WNOHANG) == pid_)
+                { exited = true; break; }
             usleep(100000); // 100ms
         }
 
@@ -70,34 +43,83 @@ public:
         pid_ = -1;
     }
 
-    [[nodiscard]] bool is_running() const
+public:
+    explicit PythonSubprocess( const std::string& script_path, 
+                               const std::vector<std::string>& args = {},
+                               const char* python_bin = kDefaultPython )
     {
-        if (pid_ <= 0) return false;
-        int status = 0;
-        pid_t result = waitpid(pid_, &status, WNOHANG);
-        return result == 0;
+        pid_ = fork();
+
+        if (pid_ < 0)
+            { throw std::runtime_error("[C++] Failed to fork Python process"); }
+
+        if (pid_ == 0)
+        {
+            // Child process: assemble arguments for execvp
+            std::vector<const char*> exec_args;
+            exec_args.push_back(python_bin);
+            exec_args.push_back(script_path.c_str());
+
+            for (const auto& arg : args)
+                { exec_args.push_back(arg.c_str()); }
+            exec_args.push_back(nullptr); // execvp() strictly requires a null-terminated array of pointers
+
+            execvp(python_bin, const_cast<char* const*>(exec_args.data()));
+
+            // If execvp fails, exit child immediately
+            std::cerr << "[C++] Failed to exec " << python_bin << " " << script_path << "\n";
+            _exit(127); // Exit code 127 is the POSIX standard shell convention for "Command not found".
+        }
+        std::cout << "[C++] Successfully exec " << python_bin << " " << script_path << "\n";
+        std::cout << "[C++] Spawned Python worker [PID: " << pid_ << "]\n";
     }
 
-    [[nodiscard]] pid_t get_pid() const { return pid_; }
+    // Strict RAII: Destructor is the single point of termination and process cleanup
+    ~PythonSubprocess() { cleanup(); }
 
     // Delete copy operations (prevent duplicate process handling)
     PythonSubprocess(const PythonSubprocess&) = delete;
     PythonSubprocess& operator=(const PythonSubprocess&) = delete;
 
-    // Allow move operations
+    // Move operations transfer ownership of the running PID
     PythonSubprocess(PythonSubprocess&& other) noexcept : pid_(other.pid_) { other.pid_ = -1; }
-
     PythonSubprocess& operator=(PythonSubprocess&& other) noexcept
     {
         if (this != &other)
         {
-            stop();
+            cleanup();
             pid_ = other.pid_;
             other.pid_ = -1;
         }
         return *this;
     }
 
-private:
-    pid_t pid_{-1};
+    /**
+     * @brief Checks if the child process is still alive.
+     * Reaps the process if it has exited and returns false.
+     */
+    [[nodiscard]] bool is_running() const {
+        if (pid_ <= 0) return false;
+
+        int status = 0;
+        pid_t result = waitpid(pid_, &status, WNOHANG);
+
+        if (result == 0) {
+            // Child is still actively running
+            return true;
+        }
+
+        if (result == pid_) {
+            // Child exited on its own and has been reaped
+            pid_ = -1;
+            return false;
+        }
+
+        // waitpid error (e.g., ECHILD)
+        pid_ = -1;
+        return false;
+    }
+
+    [[nodiscard]] pid_t get_pid() const { return pid_; }
+
 };

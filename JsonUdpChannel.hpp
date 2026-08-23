@@ -24,20 +24,19 @@ public:
      * @brief Constructs a dual-port UDP communication channel.
      * @param bind_port Local port to bind and listen on.
      * @param target_port Remote port to send packets to.
-     * @param target_ip Remote destination IP address.
      * @param bind_ip Local interface address to bind to.
+     * @param target_ip Remote destination IP address.
      */
-    JsonUdpChannel(uint16_t bind_port, 
-                   uint16_t target_port, 
-                   const std::string& target_ip = "127.0.0.1",
-                   const std::string& bind_ip = "127.0.0.1")
+    JsonUdpChannel( uint16_t bind_port, 
+                    uint16_t target_port,
+                    const std::string& bind_ip = "127.0.0.1",
+                    const std::string& target_ip = "127.0.0.1" )
         : bind_port_(bind_port), target_port_(target_port) {
         
         // 1. Create UDP socket
         sock_fd_ = socket(AF_INET, SOCK_DGRAM, 0);
-        if (sock_fd_ < 0) {
-            throw std::runtime_error("Failed to create UDP socket: " + std::string(strerror(errno)));
-        }
+        if (sock_fd_ < 0)
+            { throw std::runtime_error("Failed to create UDP socket: " + std::string(strerror(errno))); }
 
         // 2. Allow port reuse to prevent bind issues on fast restarts
         int optval = 1;
@@ -88,9 +87,8 @@ public:
         : sock_fd_(other.sock_fd_), 
           bind_port_(other.bind_port_),
           target_port_(other.target_port_), 
-          target_addr_(other.target_addr_) {
-        other.sock_fd_ = -1;
-    }
+          target_addr_(other.target_addr_)
+          { other.sock_fd_ = -1; }
 
     JsonUdpChannel& operator=(JsonUdpChannel&& other) noexcept {
         if (this != &other) {
