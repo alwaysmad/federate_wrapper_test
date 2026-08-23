@@ -13,6 +13,7 @@ endif()
 add_executable(subprocess_test
     main.cpp
     PythonSubprocess.hpp
+    JsonUdsChannel.hpp
 )
 
 target_include_directories(subprocess_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

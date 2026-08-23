@@ -1,5 +1,5 @@
 #include "PythonSubprocess.hpp"
-#include "JsonUdpChannel.hpp"
+#include "JsonUdsChannel.hpp"
 
 #include <csignal>
 #include <atomic>
@@ -18,7 +18,6 @@ void signal_handler(int signum) {
 }
 
 int main() {
-    // 1. Hook signals for clean Ctrl+C shutdown
     struct sigaction sa{};
     sa.sa_handler = signal_handler;
     sigemptyset(&sa.sa_mask);
@@ -26,51 +25,52 @@ int main() {
     sigaction(SIGINT, &sa, nullptr);
     sigaction(SIGTERM, &sa, nullptr);
 
-    constexpr uint16_t kCppBindPort = 5006;
-    constexpr uint16_t kPythonBindPort = 5005;
+    const std::string cpp_sock = "/tmp/federate_cpp.sock";
+    const std::string py_sock = "/tmp/federate_py.sock";
 
     try {
-        // 2. Launch Python subprogram targeting the port
+        // 1. Initialize C++ channel (binds /tmp/federate_cpp.sock immediately)
+        JsonUdsChannel channel(cpp_sock, py_sock);
+
+        // 2. Launch Python child passing explicit socket paths
         PythonSubprocess worker("worker.py", {
-            "--listen-port", std::to_string(kPythonBindPort),
-            "--send-port", std::to_string(kCppBindPort)
+            "--listen-sock", py_sock,
+            "--send-sock", cpp_sock
         });
 
-        // Give Python a moment to bind its socket
-        std::this_thread::sleep_for(200ms);
+        // Small delay for Python socket bind
+        std::this_thread::sleep_for(150ms);
 
-        // 3. Initialize the UDP channel
-        JsonUdpChannel channel(kCppBindPort, kPythonBindPort);
-
-        // 4. Dispatch test JSON packets every 500ms
-        int iteration = 0;
-        while (!g_shutdown_requested.load()) {
+        // 3. Synchronous federate cycle
+        int step = 0;
+        while (!g_shutdown_requested.load() && step < 5) {
             if (!worker.is_running()) {
-                std::cerr << "[C++] Error: Worker exited unexpectedly.\n";
+                std::cerr << "[C++] Worker exited prematurely.\n";
                 break;
             }
 
-            nlohmann::json test_payload = {
-                {"command", "telemetry_update"},
-                {"step", iteration},
-                {"position", {1.2 * iteration, 0.5 * iteration, 10.0}},
-                {"active", true}
+            nlohmann::json tick = {
+                {"command", "advance_time"},
+                {"step", step},
+                {"federate_time", step * 0.1}
             };
 
-            std::cout << "[C++] Sending iteration " << iteration << "...\n";
-            channel.send(test_payload);
+            std::cout << "[C++] Dispatching step " << step << "...\n";
+            channel.send(tick);
 
-            iteration++;
-            std::this_thread::sleep_for(500ms);
+            // Wait for worker ACK with 1-second timeout
+            nlohmann::json ack = channel.receive(1000ms);
+            std::cout << "[C++] Worker Response: " << ack.dump() << "\n";
+
+            step++;
+            std::this_thread::sleep_for(200ms);
         }
-
-        std::cout << "\n[C++] Stopping run loop...\n";
 
     } catch (const std::exception& e) {
         std::cerr << "[C++] Fatal Error: " << e.what() << "\n";
         return 1;
     }
 
-    std::cout << "[C++] Exit clean.\n";
+    std::cout << "[C++] Clean exit. Sockets unlinked.\n";
     return 0;
 }
