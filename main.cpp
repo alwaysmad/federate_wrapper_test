@@ -11,13 +11,14 @@ using namespace std::chrono_literals;
 
 static std::atomic<bool> g_shutdown_requested{false};
 
-void signal_handler(int signum) {
-    if (signum == SIGINT || signum == SIGTERM) {
-        g_shutdown_requested.store(true);
-    }
+void signal_handler(int signum)
+{
+    if (signum == SIGINT || signum == SIGTERM)
+        { g_shutdown_requested.store(true); }
 }
 
-int main() {
+int main()
+{
     struct sigaction sa{};
     sa.sa_handler = signal_handler;
     sigemptyset(&sa.sa_mask);
@@ -59,8 +60,9 @@ int main() {
             step++;
             std::this_thread::sleep_for(500ms);
         }
-
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e)
+    {
         std::cerr << "[C++] Fatal Error: " << e.what() << "\n";
         return 1;
     }

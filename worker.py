@@ -11,48 +11,60 @@ def sigterm_handler(signum, frame):
 
 signal.signal(signal.SIGTERM, sigterm_handler)
 
-parser = argparse.ArgumentParser(description="Abstract Namespace Worker")
+parser = argparse.ArgumentParser(description="Abstract Namespace Slave Worker")
 parser.add_argument("--ipc-name", type=str, required=True, help="Abstract IPC name (without null byte)")
 args = parser.parse_args()
 
-# 1. Initialize SOCK_SEQPACKET
+# 1. Initialize SEQPACKET socket (inherits default blocking mode with no timeout)
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
 
-# 2. Connect via Abstract Namespace by prepending \0
+# 2. Connect via Abstract Namespace (\0 prefix)
 abstract_address = "\0" + args.ipc_name
 try:
     sock.connect(abstract_address)
+    print(f"[Python] Connected to Abstract IPC: {args.ipc_name}", flush=True)
 except Exception as e:
-    print(f"[Python] Fatal: Failed to connect to C++ IPC '{args.ipc_name}': {e}", file=sys.stderr)
+    print(f"[Python] Fatal: Failed to connect to IPC endpoint '{args.ipc_name}': {e}", file=sys.stderr)
     sys.exit(1)
-
-print(f"[Python] Connected to Abstract IPC: {args.ipc_name}", flush=True)
 
 try:
     while True:
-        # SEQPACKET guarantees we receive exactly one discrete JSON message per recv() call
-        data = sock.recv(65535)
+        # Blocks indefinitely until C++ sends a message or terminates the link
+        data = sock.recv(65536)
         if not data:
-            print("[Python] C++ closed the connection. Exiting.", flush=True)
+            print("[Python] C++ closed the IPC connection. Exiting loop.", flush=True)
             break
 
-        payload = json.loads(data.decode("utf-8"))
+        try:
+            payload = json.loads(data.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            print(f"[Python] Malformed payload received: {e}", file=sys.stderr)
+            err_response = {"status": "ERROR", "error": "malformed_json"}
+            sock.sendall(json.dumps(err_response).encode("utf-8"))
+            continue
+
         step = payload.get("step", 0)
         command = payload.get("command", "unknown")
-        
-        print(f"[Python] Processed command '{command}' step {step}", flush=True)
 
-        # 3. Formulate and send response on the same connected socket
+        # --- Subprogram logic runs here ---
         response = {
             "status": "ACK",
-            "in_response_to": step
+            "in_response_to": step,
+            "command": command
         }
+
+        # Send reply back to C++
         sock.sendall(json.dumps(response).encode("utf-8"))
 
+except BrokenPipeError:
+    print("[Python] Parent disconnected abruptly.", file=sys.stderr)
 except KeyboardInterrupt:
     pass
 except Exception as e:
-    print(f"[Python] Runtime error: {e}", file=sys.stderr)
+    print(f"[Python] Unexpected runtime error: {e}", file=sys.stderr)
 finally:
+    # Because SystemExit inherits from BaseException (not Exception)
+    # it skips the except Exception: clause, unwinds the call stack
+    # and triggers the finally: block before the interpreter terminates
     sock.close()
     print("[Python] IPC socket closed.", flush=True)
