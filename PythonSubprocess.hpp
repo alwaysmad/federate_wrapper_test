@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <stdexcept>
+#include <utility>
 #include <unistd.h>
 #include <sys/wait.h>
 #include <signal.h>
@@ -14,7 +15,7 @@ private:
     mutable pid_t pid_{-1};
     static constexpr const char* kDefaultPython = "python3";
 
-    inline void cleanup() noexcept
+    void cleanup() noexcept
     {
         if (pid_ <= 0) return;
 
@@ -75,7 +76,6 @@ public:
         std::cout << "[C++] Spawned Python worker [PID: " << pid_ << "]\n";
     }
 
-    // Strict RAII: Destructor is the single point of termination and process cleanup
     ~PythonSubprocess() { cleanup(); }
 
     // Delete copy operations (prevent duplicate process handling)
@@ -89,8 +89,7 @@ public:
         if (this != &other)
         {
             cleanup();
-            pid_ = other.pid_;
-            other.pid_ = -1;
+            pid_ = std::exchange(other.pid_, -1);
         }
         return *this;
     }
@@ -117,6 +116,5 @@ public:
         return false;
     }
 
-    [[nodiscard]] pid_t get_pid() const { return pid_; }
-
+    [[nodiscard]] inline pid_t get_pid() const { return pid_; }
 };
