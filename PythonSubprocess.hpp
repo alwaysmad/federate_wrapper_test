@@ -72,7 +72,7 @@ public:
         }
     }
 
-    ~PythonSubprocess() { cleanup(); }
+    ~PythonSubprocess() noexcept { cleanup(); }
 
     // Delete copy operations (prevent duplicate process handling)
     PythonSubprocess(const PythonSubprocess&) = delete;

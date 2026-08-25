@@ -4,6 +4,8 @@
 #include <csignal>
 #include <atomic>
 #include <iostream>
+#include <chrono>
+#include <thread>
 
 using namespace std::chrono_literals;
 
@@ -33,9 +35,9 @@ int main()
         PythonSubprocess worker("worker.py", {"--ipc-name", unique_ipc_name});
         std::cout << "[C++] Spawned Python worker [PID: " << worker.get_pid() << "]\n";
         
-        // 4. Accept the connection (throws if Python fails to launch/connect in 10 min)
+        // 4. Accept the connection (throws if Python fails to launch/connect in 2 seconds)
         std::cout << "[C++] Waiting for Python worker to connect...\n";
-        channel.accept_client();
+        channel.accept_client(std::chrono::seconds(2));
         std::cout << "[C++] Connection established!\n";
 
         // 5. Synchronous federation loop
@@ -53,12 +55,12 @@ int main()
             channel.send(cmd);
             
             // receive() blocks until Python sends ACK or timeout occurs
-            nlohmann::json ack = channel.receive();
+            nlohmann::json ack = channel.receive(std::chrono::seconds(2));
             std::cout << "[C++] ACK: " << ack.dump() << "\n";
 
             step++;
-            usleep(100000); // 100ms
-            //std::this_thread::sleep_for(500ms);
+            std::this_thread::sleep_for(100ms);
+            //usleep(100000); // 100ms
         }
         std::cout << "[C++] Terminating Python worker [PID: " << worker.get_pid() << "]...\n";
     }
