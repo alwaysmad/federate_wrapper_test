@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(subprocess_test CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -25,7 +25,7 @@ file(CREATE_LINK
     SYMBOLIC
 )
 
-# Optional: find nlohmann_json if installed system-wide
+# Find nlohmann_json if installed system-wide
 find_package(nlohmann_json QUIET)
 if(nlohmann_json_FOUND)
     target_link_libraries(subprocess_test PRIVATE nlohmann_json::nlohmann_json)

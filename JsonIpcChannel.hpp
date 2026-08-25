@@ -35,12 +35,13 @@ private:
 
     static std::pair<sockaddr_un, socklen_t> make_abstract_addr(const std::string& name) noexcept
     {
-        sockaddr_un addr {
-            .sun_family = AF_UNIX,
-            .sun_path = {} // Zero-initializes all 108 bytes, ensuring addr.sun_path[0] == '\0', the magic byte that makes it an Abstract socket
-        };
-        // Copy name starting at offset 1
+        sockaddr_un addr;
+        std::memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        // addr.sun_path[0] remains '\0' due to memset (Abstract Namespace)
+        // ensuring addr.sun_path[0] == '\0', the magic byte that makes it an Abstract socket
         std::memcpy(addr.sun_path + 1, name.data(), name.size());
+
         // Linux requires the exact length of the abstract name to bind properly
         socklen_t len = offsetof(sockaddr_un, sun_path) + 1 + name.size();
         return {addr, len};
@@ -52,9 +53,14 @@ private:
      */
     static void poll_fd_ready(int fd, std::chrono::milliseconds timeout, const char* error_context)
     {
-        const int timeout_ms = (timeout == kInfiniteTimeout) ? -1 : static_cast<int>(timeout.count());
+        const int timeout_ms = (timeout == infinite_timeout()) ? -1 : static_cast<int>(timeout.count());
         
-        struct pollfd pfd{ .fd = fd, .events = POLLIN, .revents = 0 };
+        struct pollfd pfd{};
+        {
+            pfd.fd = fd;
+            pfd.events = POLLIN;
+            pfd.revents = 0;
+        }
 
         const int poll_res = poll(&pfd, 1, timeout_ms);
         if (poll_res == 0)
@@ -67,9 +73,12 @@ public:
     using json = nlohmann::json;
 
     // Timeout constants
-    static constexpr std::chrono::milliseconds kDefaultTimeout = std::chrono::minutes(10);
-    static constexpr std::chrono::milliseconds kInfiniteTimeout = std::chrono::milliseconds(0);
-    static constexpr size_t kMaxPacketSize = 65536;
+    static constexpr std::chrono::milliseconds default_timeout() noexcept
+        { return std::chrono::minutes(10); }
+    static constexpr std::chrono::milliseconds infinite_timeout() noexcept
+        { return std::chrono::milliseconds(0); }
+    static constexpr size_t max_packet_size() noexcept
+        { return 65536; } // 64KB, maximum for SOCK_SEQPACKET
 
     [[nodiscard]] inline const std::string& get_ipc_name() const noexcept { return ipc_name_; }
     [[nodiscard]] inline bool is_connected() const noexcept { return client_fd_ >= 0; }
@@ -78,7 +87,7 @@ public:
      * @brief Creates a SOCK_SEQPACKET channel in the Linux Abstract Namespace.
      * @param ipc_name The unique name for this connection (e.g., "rti_worker_1234")
      */
-    explicit JsonIpcChannel(const std::string& ipc_name) : ipc_name_(ipc_name), recv_buffer_(kMaxPacketSize)
+    explicit JsonIpcChannel(const std::string& ipc_name) : ipc_name_(ipc_name), recv_buffer_(max_packet_size())
     {
         // 0. Validate socket name length
         if (ipc_name_.empty() || ipc_name_.length() >= sizeof(sockaddr_un::sun_path) - 1)
@@ -91,10 +100,13 @@ public:
             { throw std::runtime_error("Failed to create SEQPACKET socket: " + std::string(strerror(errno))); }
 
         // 2. Configure Abstract Namespace address (starts with null byte)
-        auto [addr, addr_len] = make_abstract_addr(ipc_name_);
+        const std::pair<sockaddr_un, socklen_t> addr_pair = make_abstract_addr(ipc_name_);
+        const sockaddr_un& addr = addr_pair.first;
+        const socklen_t addr_len = addr_pair.second;
 
         // 3. Bind
-        if (bind(server_fd_, reinterpret_cast<const struct sockaddr*>(&addr), addr_len) < 0) {
+        if (bind(server_fd_, reinterpret_cast<const struct sockaddr*>(&addr), addr_len) < 0)
+        {
             int err = errno;
             close(server_fd_);
             server_fd_ = -1;
@@ -102,7 +114,8 @@ public:
         }
 
         // 4. Listen
-        if (listen(server_fd_, 1) < 0) {
+        if (listen(server_fd_, 1) < 0)
+        {
             int err = errno;
             close(server_fd_);
             server_fd_ = -1;
@@ -110,7 +123,7 @@ public:
         }
 
         // 5. Reserve send buffer to avoid repeated allocations during execution
-        send_buffer_.reserve(kMaxPacketSize);
+        send_buffer_.reserve(max_packet_size());
     }
 
     ~JsonIpcChannel() noexcept { cleanup(); }
@@ -156,7 +169,7 @@ public:
         // 1. Convert timeout to timeval structure
         struct timeval tv{};
         // setting tv_sec = 0 and tv_usec = 0 explicitly disables the timeout (blocking indefinitely).
-        if (timeout != kInfiniteTimeout) 
+        if (timeout != infinite_timeout()) 
         {
             const auto secs = std::chrono::duration_cast<std::chrono::seconds>(timeout);
             const auto usecs = std::chrono::duration_cast<std::chrono::microseconds>(timeout - secs);
@@ -171,7 +184,7 @@ public:
     /**
     * @brief Waits for the child Python worker to connect.
     */
-    void accept_client(std::chrono::milliseconds timeout = kDefaultTimeout)
+    void accept_client(std::chrono::milliseconds timeout = default_timeout())
     {
         // 0. Check socket status
         if (server_fd_ < 0)
@@ -186,7 +199,7 @@ public:
             { throw std::runtime_error("Failed to accept IPC client: " + std::string(strerror(errno))); }
 
         // 3. Configure receive timeout on the accepted socket
-        set_socket_timeout(kDefaultTimeout);
+        set_socket_timeout(default_timeout());
     }
 
     /**
@@ -213,7 +226,7 @@ public:
      * @brief Receives a JSON payload.
      * @param timeout Wait duration. Passing std::chrono::milliseconds(0) blocks indefinitely.
      */
-    [[nodiscard]] json receive(std::chrono::milliseconds timeout = kDefaultTimeout) const
+    [[nodiscard]] json receive(std::chrono::milliseconds timeout = default_timeout()) const
     {
         // 0. Check socket status
         if (client_fd_ < 0)
