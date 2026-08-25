@@ -6,7 +6,7 @@ import signal
 import argparse
 
 def sigterm_handler(signum, frame):
-    print("\n[Python] SIGTERM received! Performing clean shutdown...", flush=True)
+    print("[Python] SIGTERM received! Performing clean shutdown...", flush=True)
     sys.exit(0)
 
 signal.signal(signal.SIGTERM, sigterm_handler)

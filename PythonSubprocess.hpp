@@ -1,6 +1,5 @@
 #pragma once
 
-#include <iostream>
 #include <string>
 #include <vector>
 #include <stdexcept>
@@ -17,9 +16,8 @@ private:
 
     void cleanup() noexcept
     {
+        // 0. If no child process is running, nothing to do
         if (pid_ <= 0) return;
-
-        std::cout << "[C++] Terminating Python worker [PID: " << pid_ << "]...\n";
 
         // 1. Send graceful shutdown signal
         kill(pid_, SIGTERM);
@@ -37,7 +35,6 @@ private:
         // 3. Force kill if child did not shut down
         if (!exited)
         {
-            std::cerr << "[C++] Child unresponsive, sending SIGKILL...\n";
             kill(pid_, SIGKILL);
             waitpid(pid_, &status, 0); // Reap zombie
         }
@@ -50,6 +47,7 @@ public:
                                const std::vector<std::string>& args = {},
                                const char* python_bin = kDefaultPython )
     {
+        // 1. Create a child process
         pid_ = fork();
 
         if (pid_ < 0)
@@ -59,6 +57,7 @@ public:
         {
             // Child process: assemble arguments for execvp
             std::vector<const char*> exec_args;
+            exec_args.reserve(args.size() + 3);
             exec_args.push_back(python_bin);
             exec_args.push_back(script_path.c_str());
 
@@ -69,11 +68,8 @@ public:
             execvp(python_bin, const_cast<char* const*>(exec_args.data()));
 
             // If execvp fails, exit child immediately
-            std::cerr << "[C++] Failed to exec " << python_bin << " " << script_path << "\n";
             _exit(127); // Exit code 127 is the POSIX standard shell convention for "Command not found".
         }
-        std::cout << "[C++] Successfully exec " << python_bin << " " << script_path << "\n";
-        std::cout << "[C++] Spawned Python worker [PID: " << pid_ << "]\n";
     }
 
     ~PythonSubprocess() { cleanup(); }
@@ -116,5 +112,5 @@ public:
         return false;
     }
 
-    [[nodiscard]] inline pid_t get_pid() const { return pid_; }
+    [[nodiscard]] inline pid_t get_pid() const noexcept { return pid_; }
 };
